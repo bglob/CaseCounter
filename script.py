@@ -3,6 +3,7 @@ import json
 import time
 
 assets = []
+totalWinter = 0
 
 def load_cookies_from_file(filepath):
     """
@@ -52,6 +53,10 @@ def get_inventory_with_cookies(user_id, app_id, cookies):
                 already_added = False
                 for tag in item.get('tags'):
                     if tag.get("localized_tag_name") == "Crate" and already_added == False:
+                        if 'actions' in item:
+                            del item['actions']
+                        if 'market_actions' in item:
+                            del item['market_actions']
                         if is_unique(item, items):
                             items.append(item)
                         already_added = True
@@ -60,7 +65,7 @@ def get_inventory_with_cookies(user_id, app_id, cookies):
         else:
             print("bad req happened 1x")
         first_run = False
-        time.sleep(0.2)
+        time.sleep(0.05)
     
     
     return items
@@ -157,5 +162,6 @@ app_id = 440  # Example App ID for CS:GO
 
 inventory_data = get_inventory_with_cookies(user_id, app_id, cookies)
 parsed_data = parse_items(inventory_data)
-with open('JSON/output'+user_id+'.json', 'w') as file:
-    file.write(json.dumps(parsed_data))
+print(parsed_data)
+# with open('JSON/output'+user_id+'.json', 'w') as file:
+#     file.write(json.dumps(parsed_data))
