@@ -32,6 +32,8 @@ def get_inventory_with_cookies(user_id, app_id, cookies):
 
     first_run = True
 
+    failures = 0
+
     while (has_more_items):
         if start_assetid:
             current_url = f"{url}&start_assetid={start_assetid}"
@@ -63,9 +65,12 @@ def get_inventory_with_cookies(user_id, app_id, cookies):
             has_more_items = data.get("more_items", False)
             start_assetid = data.get("last_assetid")
         else:
+            if (failures >= 15):
+                return "Error, too many bad requests"
             print("bad req happened 1x")
+            failures += 1
         first_run = False
-        time.sleep(0.05)
+        time.sleep(0.5)
     
     
     return items
@@ -157,7 +162,7 @@ def parse_items(items):
 # Example usage with dummy data
 cookies = load_cookies_from_file("cookies.secrets.txt")
 
-user_id = '76561199190089345'  # Example SteamID64
+user_id = '76561198878832586'  # Example SteamID64
 app_id = 440  # Example App ID for CS:GO
 
 inventory_data = get_inventory_with_cookies(user_id, app_id, cookies)
