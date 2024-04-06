@@ -1,33 +1,31 @@
 import requests
 
-def get_steam_inventory_count(user_id, app_id, steam_api_key):
+def get_inventory_with_cookies(user_id, app_id, cookies):
     """
-    Get the total item count of a user's Steam inventory for a specific game.
+    Fetch a user's inventory using session cookies for authentication.
     
-    :param user_id: The Steam ID of the user.
-    :param app_id: The application ID for the game (e.g., 730 for CS:GO).
-    :param steam_api_key: Your Steam Web API key.
-    :return: The total item count or a message indicating an error or empty inventory.
+    :param user_id: The Steam user's ID.
+    :param app_id: The application ID for the game.
+    :param cookies: A dictionary of session cookies obtained from a manual login.
+    :return: Inventory data or an error message.
     """
-    url = f"http://api.steampowered.com/IEconItems_{app_id}/GetPlayerItems/v0001/"
-    params = {
-        'key': steam_api_key,
-        'steamid': user_id,
-    }
+    url = f"https://steamcommunity.com/inventory/{user_id}/{app_id}/2?l=english&count=5000"
+    headers = {'Cookie': '; '.join([f'{key}={value}' for key, value in cookies.items()])}
     
-    response = requests.get(url, params=params)
+    response = requests.get(url, headers=headers)
     if response.status_code == 200:
-        data = response.json()
-        if data.get('result', {}).get('status') == 1:
-            total_items = len(data.get('result', {}).get('items', []))
-            return f"Total items in inventory: {total_items}"
-        else:
-            return "Failed to get inventory items. Status code not 1."
+        return response.json()
     else:
-        return f"Error querying Steam API. HTTP Status Code: {response.status_code}"
+        return f"Failed to retrieve inventory. Status code: {response.status_code}"
 
-# Example usage
-steam_api_key = "YOUR_STEAM_API_KEY_HERE"
-user_id = "STEAM_USER_ID_HERE"
-app_id = 730  # Example for CS:GO
-print(get_steam_inventory_count(user_id, app_id, steam_api_key))
+# Example usage with dummy data
+cookies = {
+    'steamLoginSecure': 'your_steamLoginSecure_value_here',
+    # Include other necessary cookies
+}
+
+user_id = '76561198000000000'  # Example SteamID64
+app_id = 730  # Example App ID for CS:GO
+
+inventory_data = get_inventory_with_cookies(user_id, app_id, cookies)
+print(inventory_data)
