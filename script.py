@@ -160,9 +160,9 @@ def parse_items(items):
     return counting_things
 
 # Example usage with dummy data
-cookies = load_cookies_from_file("cookies.secrets.txt")
+cookies = load_cookies_from_file("secrets/cookies.txt")
 
-user_id = '76561198878832586'  # Example SteamID64
+user_id = '76561199190089345'  # Example SteamID64
 app_id = 440  # Example App ID for CS:GO
 
 inventory_data = get_inventory_with_cookies(user_id, app_id, cookies)
