@@ -3,6 +3,10 @@ import json
 import time
 import csv
 from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
 
 assets = []
 prices = dict()
@@ -161,7 +165,7 @@ def parse_items(items):
                         counting_things[dictName] = howMany
     return counting_things
 
-def price_querier(item_data):
+def price_querier(driver,item_data):
     marketable = item_data[1]
     if marketable == False:
         # 0 means its in the non marketable list
@@ -196,6 +200,8 @@ def price_querier(item_data):
             zack_sleep(30)
             return price_querier(url)
 
+        # if we got here, we have a price that should be able to load on this item
+
         # If we got here i am *praying* that we are on the price screen
         buy_price_div = soup.find(id="market_commodity_forsale")
 
@@ -222,6 +228,64 @@ def price_querier(item_data):
         
         return (price,marketable)
 
+def price_querier_selenium(driver,item_data):
+    
+
+    marketable = item_data[1]
+    if marketable == False:
+        # 0 means its in the non marketable list
+        return (0,False)
+    url = f"https://steamcommunity.com/market/listings/440/"
+    url = url + item_data[0]
+
+    # this should be set to max int or something if we are doing a real run maybe ?
+    max_retries = 3
+    retry_count = 0
+
+    while retry_count < max_retries:
+        driver.get(url)
+
+        time.sleep(1)
+        page_source = driver.page_source
+
+        if "An error was encountered while processing your request:" in page_source:
+            print("Rate limit detected, waiting 30s...")
+            time.sleep(30)
+            retry_count += 1
+            continue
+        elif "There was an error getting listings for this item. Please try again later." in page_source:
+            print("Steam backend crapped the bed, waiting 5s...")
+            time.sleep(5)
+            retry_count += 1
+            continue
+        elif "There are no listings for this item." in page_source:
+            print("Item not found, non-marketable or bad name: \"" + item_data[0] + "\"")
+            with open("JSON/badItems.txt", 'a') as file:
+                file.write(url + " failed with bad item name.\n")
+            return(-1.0,False)
+
+        time.sleep(4)
+        try:
+            forsale_div = driver.find_element(By.ID, "market_commodity_forsale")
+
+            price_spans = forsale_div.find_elements(By.CLASS_NAME, "market_commodity_orders_header_promote")
+
+            for span in price_spans:
+                if '$' in span.text:
+                    price_text = span.text.strip().replace('$','').strip()
+                    print("Price found: " + price_text)
+                    return (float(price_text),True)
+            print("Should not get here, maybe price didn't load?")
+            return (-2,False)
+        except Exception as e:
+            print(f"Error finding price element: {str(e)}")
+            retry_count += 1
+            time.sleep(5)
+
+    
+    # Failed after multiple retries
+    return (-4,False)
+
 def nameify(key):
     marketable = True
     if any(x in key.lower() for x in ["crate","cooler","reel"]):
@@ -243,20 +307,35 @@ def nameify(key):
         item_name = item_name.replace("Collection","Case")
     return (item_name,marketable)
 
-def add_price_of(key):
+def add_price_of(driver,key):
     item_data = nameify(key)
-    querier_output = price_querier(item_data)
+    querier_output = price_querier_selenium(driver,item_data)
     # add (name: [price, marketable]) to dict
     global prices
     prices[key] = querier_output
 
-def find_prices(key):
+def find_prices(driver,key):
     global prices
     if key not in prices.keys():
-        add_price_of(key)
+        add_price_of(driver,key)
+
+def setup_driver():
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.binary_location = "D:\chromium\chrome-win\chrome.exe"
+
+    # Set path to chromedriver
+    # VINCENT ADJUST
+    service = Service(executable_path="D:\chromium\chromedriver_win32\chromedriver.exe")
+
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    return driver
+
 
 def build_output(data):
     print("Not done yet... this just will build the output to the format vicncent wants")
+    global prices
+    print(prices)
 
 # 440 is CSGO
 app_id = 440
@@ -264,12 +343,16 @@ app_id = 440
 # if this stops working randomly put new cookies in the cookie jar
 cookies = load_cookies_from_file("secrets/cookies.txt")
 
+
+# This is the driver for this script
 def read_inventory(user_id):
     global app_id
     global cookies
 
     fileName = ""
 
+
+    # Loading up some inventory here
     inventory_data = get_inventory_with_cookies(user_id, app_id, cookies)
     if type(inventory_data) == str and inventory_data == "Error, too many bad requests":
         with open("JSON/errorLog.txt", 'a') as file:
@@ -288,32 +371,48 @@ def read_inventory(user_id):
     with open(fileName, 'w') as file:
         file.write(json.dumps(parsed_data))
 
-    for key in parsed_data.keys():
-        find_prices(key)
+    # Start up selenium
+    driver = setup_driver()
 
+    # Price searching
+    for key in parsed_data.keys():
+        find_prices(driver,key)
+
+    driver.quit()
     #TODO make sure something is done with the built output
     #TODO write this function
     return build_output(parsed_data)
     
     return
 
-with open('secrets/userIds.txt') as file:
-    csvreader = csv.reader(file)
-    users = next(csvreader)
 
-# Clearing error log
-with open("JSON/errorLog.txt", 'w') as file:
-    file.write("Error log:\n\n")
+def main():
+    # Clear badItems file
+    with open("JSON/badItems.txt", 'w') as file:
+        file.write("\n")
 
-# Clearing bad item log
-with open("JSON/badItems.txt", 'w') as file:
-    file.write("Bad item log:\n\n")
-# user_id = '76561198878832586'  # Example SteamID64
 
-#This is how we will run the stuff
-# for user in users:
-#     read_inventory(user)
+    with open('secrets/userIds.txt') as file:
+        csvreader = csv.reader(file)
+        users = next(csvreader)
 
-#This is debug mode stuff for testing why the hell the webpage wasn't coming with the price
-read_inventory(users[0])
-print(prices)
+    # Clearing error log
+    with open("JSON/errorLog.txt", 'w') as file:
+        file.write("Error log:\n\n")
+
+    # Clearing bad item log
+    with open("JSON/badItems.txt", 'w') as file:
+        file.write("Bad item log:\n\n")
+    # user_id = '76561198878832586'  # Example SteamID64
+
+    #This is how we will run the stuff
+    # for user in users:
+    #     read_inventory(user)
+
+    
+    #This is debug mode stuff for testing why the hell the webpage wasn't coming with the price
+    read_inventory(users[0])
+    print(prices)
+
+if __name__ == "__main__":
+    main()
