@@ -333,6 +333,7 @@ def setup_driver():
 
 
 def build_output(data):
+    # TODO just multiply prices by number of the item, make the output vincent needed.
     print("Not done yet... this just will build the output to the format vicncent wants")
     global prices
     print(prices)
@@ -351,6 +352,7 @@ def read_inventory(user_id):
 
     fileName = ""
 
+    # TODO cache everything, less runtime every time i am debugging
 
     # Loading up some inventory here
     inventory_data = get_inventory_with_cookies(user_id, app_id, cookies)
@@ -376,6 +378,7 @@ def read_inventory(user_id):
 
     # Price searching
     for key in parsed_data.keys():
+        #TODO fix bugs, probably add more verbose logs and output to files to see why certain errors happen
         find_prices(driver,key)
 
     driver.quit()
