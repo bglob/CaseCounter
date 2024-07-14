@@ -2,6 +2,7 @@ import requests
 import json
 import time
 import csv
+import os
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -46,7 +47,7 @@ def zack_sleep(duration):
     time.sleep(duration)
     return
 
-def get_inventory_with_cookies(user_id, app_id, cookies):
+def get_inventory_with_cookies(user_id, app_id, cookies, retry_max):
     """
     Fetch a user's inventory using session cookies for authentication.
     
@@ -64,6 +65,9 @@ def get_inventory_with_cookies(user_id, app_id, cookies):
     succeeded_once = False
 
     failures = 0
+
+    if retry_max:
+        failures = -99
 
     while (has_more_items):
         if start_assetid:
@@ -197,7 +201,7 @@ def price_querier(driver,item_data):
         rate_limit_p = soup.find('p', class_='sectionText')
         if rate_limit_p and "An error was encountered while processing your request:" in rate_limit_p.text:
             print('Rate limited, sleeping 30s...')
-            zack_sleep(30)
+            zack_sleep(180)
             return price_querier(url)
 
         # if we got here, we have a price that should be able to load on this item
@@ -230,6 +234,8 @@ def price_querier(driver,item_data):
 
 def price_querier_selenium(driver,item_data):
     
+    if item_data[0] == "Mann%20Co.%20Stockpile%20Crate":
+        return (0.03,True)
 
     marketable = item_data[1]
     if marketable == False:
@@ -249,8 +255,8 @@ def price_querier_selenium(driver,item_data):
         page_source = driver.page_source
 
         if "An error was encountered while processing your request:" in page_source:
-            print("Rate limit detected, waiting 30s...")
-            time.sleep(30)
+            print("Rate limit detected, waiting 180s...")
+            time.sleep(180)
             retry_count += 1
             continue
         elif "There was an error getting listings for this item. Please try again later." in page_source:
@@ -293,7 +299,7 @@ def nameify(key):
         item_name = item_name.replace("#","%23")
     elif "cosmetics" in key.lower():
         item_name = '%20'.join(key.split())
-        item_name = item_name.replace("Cosmetics","Cosmetic%20Case")
+        item_name = item_name.replace("Cosmetics%20Collection","Cosmetic%20Case")
     elif any(x in key.lower() for x in ["scream fortress","winter","infernal reward","jungle jackpot","summer"]):
         item_name = '%20'.join(key.split())
         item_name = item_name.replace("Collection","War%20Paint%20Case")
@@ -305,6 +311,8 @@ def nameify(key):
     else:
         item_name = '%20'.join(key.split())
         item_name = item_name.replace("Collection","Case")
+
+    item_name = item_name.replace("#","%23")
     return (item_name,marketable)
 
 def add_price_of(driver,key):
@@ -332,11 +340,45 @@ def setup_driver():
     return driver
 
 
-def build_output(data):
+def dump_prices(priceFileName):
+    global prices
+
+    with open(priceFileName, 'w') as file:
+        file.write(json.dumps(prices))
+
+def print_that_result(total_values,generic_filename):
+
+    json_filename = "JSON/final/data/" + generic_filename
+    text_filename = "JSON/final/text/" + generic_filename
+
+    # Write to JSON file
+    with open(json_filename, 'w') as json_file:
+        json.dump(total_values, json_file, indent=4)
+
+    # Write to text file with pretty output
+    with open(text_filename, 'w') as text_file:
+        for crate_name, total_value in total_values.items():
+            if crate_name != 'Total Value':
+                text_file.write(f"{crate_name}: ${total_value:.2f}\n")
+        text_file.write(f"Total Value of all crates: ${total_values['Total Value']:.2f}\n")
+
+
+def build_output(data,generic_filename):
     # TODO just multiply prices by number of the item, make the output vincent needed.
     print("Not done yet... this just will build the output to the format vicncent wants")
     global prices
-    print(prices)
+    total_values = {}
+    combined_total = 0
+    for crate_name, count in data.items():
+        if crate_name in prices and prices[crate_name][1]:
+            price = prices[crate_name][0]
+            total_value = count * price
+            total_values[crate_name] = total_value
+            combined_total += total_value
+    total_values['Total Value'] = combined_total
+
+    print_that_result(total_values,generic_filename)
+    print("Done :)")
 
 # 440 is CSGO
 app_id = 440
@@ -345,51 +387,116 @@ app_id = 440
 cookies = load_cookies_from_file("secrets/cookies.txt")
 
 
+def read_json_files_and_sum_total_values(directory):
+    total_value = 0
+
+    # Get all files in the specified directory
+    all_files = os.listdir(directory)
+    
+    # Filter out only the .json files
+    json_files = [f for f in all_files if f.endswith('.json')]
+
+    for json_file in json_files:
+        file_path = os.path.join(directory, json_file)
+        with open(file_path, 'r') as file:
+            data = json.load(file)
+            if "Total Value" in data:
+                total_value += data["Total Value"]
+    
+    return total_value
+
+def write_output_to_file(output_file, total_value, item_tallies):
+    output_data = {"Total Value": total_value}
+
+    with open(output_file, 'w') as file:
+        json.dump(output_data, file, indent=4)
+
+
 # This is the driver for this script
-def read_inventory(user_id):
+def read_inventory(user_id,retry_max):
     global app_id
     global cookies
 
-    fileName = ""
+    all_files = os.listdir("JSON/counted")
+    
+    # Filter out only the .json files and remove the .json extension
+    json_files = [f[:-5] for f in all_files if f.endswith('.json')]
 
-    # TODO cache everything, less runtime every time i am debugging
+    countFileName = ""
 
-    # Loading up some inventory here
-    inventory_data = get_inventory_with_cookies(user_id, app_id, cookies)
-    if type(inventory_data) == str and inventory_data == "Error, too many bad requests":
-        with open("JSON/errorLog.txt", 'a') as file:
-            file.write(user_id + " failed.\n")
-        return
-    parsed_data = parse_items(inventory_data)
     nameOutput = get_steam_person_name(user_id,cookies,"profiles")
+
+    if (nameOutput in json_files):
+        print(nameOutput + " was already counted, skipping...\n")
+        return
     
     if "BREWSKI-CASEGOD-" in (nameOutput.strip().upper()):
-        fileName = "JSON/counted/Brewski425.json"
+        countFileName = "JSON/counted/Brewski425.json"
     else:
-        fileName = "JSON/counted/" + nameOutput + ".json"
+        countFileName = "JSON/counted/" + nameOutput + ".json"
 
-    print(nameOutput.strip() + " succeeded!! Outputting to " + fileName[13:])
 
-    with open(fileName, 'w') as file:
-        file.write(json.dumps(parsed_data))
+    generic_filename = countFileName[len("JSON/counted/"):]
+
+    # If it's cached already
+    if (os.path.isfile(countFileName)):
+        with open(countFileName, 'r') as file:
+            json_data = file.read()
+            parsed_data = json.loads(json_data)
+    # If we haven't run it for this acc
+    else:
+
+        # TODO cache everything, less runtime every time i am debugging
+
+        # Loading up some inventory here
+        inventory_data = get_inventory_with_cookies(user_id, app_id, cookies, retry_max)
+        if type(inventory_data) == str and inventory_data == "Error, too many bad requests":
+            with open("JSON/errorLog.txt", 'a') as file:
+                file.write(user_id + " failed.\n")
+            return
+        parsed_data = parse_items(inventory_data)
+        
+
+        print(nameOutput.strip() + " succeeded!! Outputting to " + countFileName[13:])
+
+        with open(countFileName, 'w') as file:
+            file.write(json.dumps(parsed_data))
+
+    
+    priceFileName = "JSON/priced/Brewski425.json"
+        
 
     # Start up selenium
     driver = setup_driver()
 
-    # Price searching
-    for key in parsed_data.keys():
-        #TODO fix bugs, probably add more verbose logs and output to files to see why certain errors happen
-        find_prices(driver,key)
+
+    if (os.path.isfile(priceFileName)):
+        
+        with open(priceFileName, 'r') as file:
+            json_data = file.read()
+            global prices
+            data = json.loads(json_data)
+            prices = {name: value for name, value in data.items() if value[1] is not False}
+        for key in parsed_data.keys():
+            find_prices(driver,key)
+        dump_prices(priceFileName)
+        
+    else:
+
+        # Price searching
+        for key in parsed_data.keys():
+            find_prices(driver,key)
+
+        dump_prices(priceFileName)
 
     driver.quit()
-    #TODO make sure something is done with the built output
-    #TODO write this function
-    return build_output(parsed_data)
+    return build_output(parsed_data,generic_filename)
     
     return
 
 
 def main():
+    print("\n")
     # Clear badItems file
     with open("JSON/badItems.txt", 'w') as file:
         file.write("\n")
@@ -408,14 +515,24 @@ def main():
         file.write("Bad item log:\n\n")
     # user_id = '76561198878832586'  # Example SteamID64
 
+
+
     #This is how we will run the stuff
     # for user in users:
-    #     read_inventory(user)
+    #     read_inventory(user, False)
+    # read_inventory("76561199125110580",True)
 
-    
-    #This is debug mode stuff for testing why the hell the webpage wasn't coming with the price
-    read_inventory(users[0])
-    print(prices)
+
+    # read_inventory(users[0]) # succeeds, already cached
+    # read_inventory(users[1]) # fails
+    # read_inventory(users[5]) # should succeed?
+    # print(prices)
+    directory_path = 'JSON/final/data'
+    output_file = 'JSON/final/tally.json'
+
+    total_value = read_json_files_and_sum_total_values(directory_path)
+    write_output_to_file(output_file, total_value)
+    print(total_value)
 
 if __name__ == "__main__":
     main()
